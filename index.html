@@ -1880,7 +1880,7 @@
         function saveProduct(e) {
             e.preventDefault();
             if (!currentUser || currentUser.role !== 'admin') {
-                showToast('⛔ غير مصرح لك', 'warning');
+                showToast('⛔ غير مصرح', 'warning');
                 return;
             }
             const id = document.getElementById('editIndex').value;
@@ -2511,17 +2511,49 @@
             renderSalesTable();
         }
 
+        // =============================================================
+        //  🔄 DELETE SALE RECORD - (تم التعديل هنا)
+        // =============================================================
         function deleteSaleRecord(id) {
             if (!currentUser || currentUser.role !== 'admin') {
                 showToast('⛔ غير مصرح', 'warning');
                 return;
             }
-            if (!confirm('هل تريد حذف سجل البيع هذا نهائياً؟ (لن تُعاد الكمية إلى المخزون تلقائياً)')) return;
-            deleteSaleFromFirestore(id).then(() => {
-                salesLog = salesLog.filter(s => s.id !== id);
-                renderSalesTable();
-                showToast('🗑️ تم حذف سجل البيع', 'info');
-            }).catch(e => showToast('❌ خطأ: ' + e.message, 'error'));
+            if (!confirm('هل تريد حذف سجل البيع هذا نهائياً؟ سيتم إعادة الكمية إلى مخزون نفس الصنف.')) return;
+
+            const saleIndex = salesLog.findIndex(s => s.id === id);
+            if (saleIndex === -1) {
+                showToast('⚠️ سجل البيع غير موجود', 'error');
+                return;
+            }
+            const sale = salesLog[saleIndex];
+            const productName = sale.name;
+            const packagesToRestore = sale.packagesConsumed || 0;
+            const buyPrice = sale.buyPriceAtSale || 0;
+
+            if (packagesToRestore <= 0) {
+                showToast('⚠️ لا توجد كمية لاستعادتها', 'warning');
+                return;
+            }
+
+            // إضافة الكمية إلى مخزون نفس الصنف (كدفعة جديدة)
+            if (!inventory[productName] || !Array.isArray(inventory[productName])) {
+                inventory[productName] = [];
+            }
+            batchCounter++;
+            const newBatch = { batchId: batchCounter, qty: packagesToRestore, buyPrice: buyPrice };
+            inventory[productName].push(newBatch);
+
+            // حفظ المخزون ثم حذف سجل البيع
+            saveInventoryToFirestore(productName, inventory[productName])
+                .then(() => deleteSaleFromFirestore(id))
+                .then(() => {
+                    salesLog.splice(saleIndex, 1);
+                    renderSalesTable();
+                    renderInventoryTable(); // تحديث الجرد فوراً
+                    showToast(`🔄 تم حذف البيع وإعادة ${packagesToRestore.toFixed(2)} عبوة إلى مخزون "${productName}"`, 'success');
+                })
+                .catch(e => showToast('❌ خطأ: ' + e.message, 'error'));
         }
 
         // ---- Revenue ----
@@ -3699,6 +3731,7 @@
         console.log('  • ربط الأصول تلقائياً عند الاستيراد');
         console.log('  • البيع بالل مع خصم الكمية الكسرية بدقة');
         console.log('  • عرض الأسعار في سطر واحد دون التواء');
+        console.log('  • حذف المبيعات يعيد الكمية إلى الجرد (نفس الصنف)');
     </script>
 </body>
 </html>
